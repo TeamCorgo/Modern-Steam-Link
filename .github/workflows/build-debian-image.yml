@@ -39,7 +39,7 @@ jobs:
           tar -xf linux-${KERNEL_VERSION}.tar.xz
 
       - name: Build kernel
-        run: ./kernel/build.sh
+        run: bash ./kernel/build.sh
 
       - name: Prepare artifacts
         working-directory: linux-${{ env.KERNEL_VERSION }}
@@ -99,7 +99,7 @@ jobs:
           docker export steamlink-debian-rootfs -o rootfs.tar
 
       - name: Create disk image
-        run: sudo ./rootfs/build.sh
+        run: sudo bash ./rootfs/build.sh
 
       - name: Upload disk image
         uses: actions/upload-artifact@v7
