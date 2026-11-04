@@ -1,0 +1,8 @@
+# Wired network with DHCP. Wi-Fi interfaces can be added in interfaces.d/.
+source /etc/network/interfaces.d/*
+
+auto lo
+iface lo inet loopback
+
+allow-hotplug eth0
+iface eth0 inet dhcp

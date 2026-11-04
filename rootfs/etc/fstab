@@ -1,0 +1,3 @@
+# The label is set by rootfs/build.sh. noatime cuts writes to the USB stick.
+# <file system>          <mount point> <type> <options>                          <dump> <pass>
+LABEL=steamlink-root     /             ext3   defaults,noatime,errors=remount-ro 0      1

@@ -1,0 +1,139 @@
+name: Build Debian Image
+
+# Builds only when started by hand: Actions tab -> Build Debian Image -> Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: "Kernel version to build"
+        required: true
+        default: "7.3.1"
+      debian_release:
+        description: "Debian release to use"
+        required: true
+        default: "trixie"
+
+env:
+  KERNEL_VERSION: ${{ inputs.kernel_version || '7.3.1' }}
+  DEBIAN_RELEASE: ${{ inputs.debian_release || 'trixie' }}
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    container: debian:trixie-slim
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends bash ca-certificates git tar xz-utils wget build-essential flex bison libssl-dev libelf-dev bc kmod python3 gcc-arm-linux-gnueabihf
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download and extract kernel
+        run: |
+          # kernel.org keeps each version under v<major>.x/
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION%%.*}.x/linux-${KERNEL_VERSION}.tar.xz
+          tar -xf linux-${KERNEL_VERSION}.tar.xz
+
+      - name: Build kernel
+        run: ./kernel/build.sh
+
+      - name: Prepare artifacts
+        working-directory: linux-${{ env.KERNEL_VERSION }}
+        # The Dockerfile expects exactly these names in kernel-<version>/
+        run: |
+          mkdir -p ../boot
+          mv /tmp/build-modules/lib/modules/${KERNEL_VERSION}-steam ../boot/
+          mv arch/arm/boot/zImage ../boot/
+          mv $(find arch/arm/boot/dts -name berlin2cd-valve-steamlink.dtb) ../boot/
+          cp .config ../boot/config-${KERNEL_VERSION}-steam
+          rm -rf ../boot/${KERNEL_VERSION}-steam/build ../boot/${KERNEL_VERSION}-steam/source
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-${{ env.KERNEL_VERSION }}-steam
+          path: boot/
+
+  build-rootfs:
+    runs-on: ubuntu-latest
+    needs: build-kernel
+    timeout-minutes: 120
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends parted xz-utils
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Download kernel
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-${{ env.KERNEL_VERSION }}-steam
+          path: kernel-${{ env.KERNEL_VERSION }}
+
+      - name: Build rootfs image
+        run: |
+          docker buildx build --platform linux/arm/v7 \
+            --build-arg KERNEL_VERSION=${KERNEL_VERSION} \
+            --build-arg DEBIAN_RELEASE=${DEBIAN_RELEASE} \
+            -f rootfs/Dockerfile --tag steamlink-debian:latest \
+            --output type=docker,dest=steamlink-debian.tar .
+
+      - name: Export rootfs tarball
+        run: |
+          docker load -i steamlink-debian.tar
+          docker create --platform linux/arm/v7 --name steamlink-debian-rootfs steamlink-debian:latest
+          docker export steamlink-debian-rootfs -o rootfs.tar
+
+      - name: Create disk image
+        run: sudo ./rootfs/build.sh
+
+      - name: Upload disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: steamlink-debian-${{ env.DEBIAN_RELEASE }}-${{ env.KERNEL_VERSION }}
+          path: steamlink-debian.img.xz
+          compression-level: 0
+
+  # Publish each build of the latest branch as a GitHub Release, so the image
+  # has a permanent public download link (build artifacts expire after 90 days)
+  release:
+    runs-on: ubuntu-latest
+    needs: build-rootfs
+    if: github.ref == 'refs/heads/latest'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download disk image
+        uses: actions/download-artifact@v8
+        with:
+          name: steamlink-debian-${{ env.DEBIAN_RELEASE }}-${{ env.KERNEL_VERSION }}
+          path: dist
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NAME=steamlink-debian-${DEBIAN_RELEASE}-${KERNEL_VERSION}
+          TAG=${DEBIAN_RELEASE}-${KERNEL_VERSION}-$(date -u +%Y%m%d)-${GITHUB_SHA::7}
+          cd dist
+          mv steamlink-debian.img.xz ${NAME}.img.xz
+          sha256sum ${NAME}.img.xz > ${NAME}.img.xz.sha256
+          gh release create "$TAG" ${NAME}.img.xz ${NAME}.img.xz.sha256 \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "Debian ${DEBIAN_RELEASE} with Linux ${KERNEL_VERSION} ($(date -u +%Y-%m-%d))" \
+            --notes "Built from ${GITHUB_SHA::7}. Flash ${NAME}.img.xz to a USB stick; see the README for steps. Default login: corgo / steamlink123."
