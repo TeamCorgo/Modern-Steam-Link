@@ -122,4 +122,4 @@ Both are byte-for-byte identical to the copies in [djmuted/steamlink-debian](htt
 
 ## Acknowledgments
 
-This project was originally inspired by and developed with reference to code from [djmuted](https://github.com/djmuted/steamlink-debian).The original project was distributed under the GNU General Public License v2.0 (GPL-2.0). The implementation in this project has since been independently rewritten.
+This project was originally inspired by and developed with reference to code from [djmuted](https://github.com/djmuted/steamlink-debian). The original project was distributed under the GNU General Public License v2.0 (GPL-2.0). The implementation in this project has since been independently rewritten.
